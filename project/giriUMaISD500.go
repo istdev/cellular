@@ -9,7 +9,6 @@ import (
 
 	cell "github.com/wiless/cellular"
 
-	"github.com/grd/statistics"
 	"github.com/wiless/cellular/antenna"
 	"github.com/wiless/cellular/deployment"
 	"github.com/wiless/cellular/pathloss"
@@ -47,7 +46,7 @@ func main() {
 
 	templateAAS = antenna.NewAAS()
 	templateAAS.SetDefault()
-
+	templateAAS.Omni = true
 	// modelsett:=pathloss.NewModelSettingi()
 	var model pathloss.PathLossModel
 	model.ModelSetting.SetDefault()
@@ -57,8 +56,8 @@ func main() {
 	singlecell.SetAllNodeProperty("BS", "AntennaType", 0)
 	singlecell.SetAllNodeProperty("UE", "AntennaType", 1) /// Set All Pico to use antenna Type 1
 
-	singlecell.SetAllNodeProperty("BS", "FreqGHz", vlib.VectorF{0.4, 0.85, 1.8}) /// Set All Pico to use antenna Type 0
-	singlecell.SetAllNodeProperty("UE", "FreqGHz", vlib.VectorF{0.4, 0.85, 1.8}) /// Set All Pico to use antenna Type 0
+	singlecell.SetAllNodeProperty("BS", "FreqGHz", vlib.VectorF{0.4, 0.5, 0.6, 0.7, 0.8}) /// Set All Pico to use antenna Type 0
+	singlecell.SetAllNodeProperty("UE", "FreqGHz", vlib.VectorF{0.4, 0.5, 0.6, 0.7, 0.8}) /// Set All Pico to use antenna Type 0
 
 	// lininfo := CalculatePathLoss(&singlecell, &model)
 
@@ -72,7 +71,7 @@ func main() {
 	for _, rxid := range rxids {
 		metrics := wsystem.EvaluteMetric(&singlecell, &model, rxid, myfunc)
 		if len(metrics) > 1 {
-			log.Printf("%s[%d] Supports %d Carriers", "UE", rxid, len(metrics))
+			// log.Printf("%s[%d] Supports %d Carriers", "UE", rxid, len(metrics))
 			MaxCarriers = int(math.Max(float64(MaxCarriers), float64(len(metrics))))
 			// log.Printf("%s[%d] Links %#v ", "UE", rxid, metrics)
 		}
@@ -92,96 +91,19 @@ func main() {
 			SINR[metric[f].FreqInGHz] = temp
 		}
 	}
+	matlab.Close()
 	cnt := 0
+	matlab = vlib.NewMatlab("sinrVal.m")
 	for f, sinr := range SINR {
 		log.Printf("\n F%d=%f \nSINR_%d= %v", cnt, f, cnt, sinr)
+		str := fmt.Sprintf("sinr_%d", cnt)
+		matlab.Export(str, sinr)
 		cnt++
 	}
 	fmt.Println("\n")
+	matlab.Command("cdfplot(sinr_0);hold all;cdfplot(sinr_1);cdfplot(sinr_2);legend('400','850','1800')")
 	matlab.Close()
 	fmt.Println("\n")
-}
-
-/// Calculate Pathloss
-
-func CalculatePathLoss(singlecell *deployment.DropSystem, model *pathloss.PathLossModel) []LinkInfo {
-
-	txNodeNames := singlecell.GetTxNodeNames()
-	txNodeNames = []string{"BS"} /// do only for BS
-
-	rxNodeNames := singlecell.GetRxNodeNames()
-	log.Println(txNodeNames, rxNodeNames)
-
-	// rxlocs := singlecell.Locations("UE")
-	rxlocs3D := singlecell.Locations3D("UE")
-	RxLinkInfo := make([]LinkInfo, len(rxlocs3D))
-
-	/// Generate Shadow Grid
-
-	fmt.Printf("SETTING %s", singlecell.CoverageRegion.Celltype)
-
-	// rows:=20
-	// cols:=20
-	// shwGrid := vlib.NewMatrixF(rows, cols)
-	// for i := 0; i < len(rxlocs3D); i++ {
-	// 	rxlocation := rxlocs3D[i]
-	// 	var info LinkInfo
-	// 	info.RxID = i
-	// }
-
-	var pathLossPerRxNode map[int]vlib.VectorF
-	pathLossPerRxNode = make(map[int]vlib.VectorF)
-	log.Println(pathLossPerRxNode)
-	for i := 0; i < len(rxlocs3D); i++ {
-		rxlocation := rxlocs3D[i]
-		var info LinkInfo
-		info.RxID = i
-
-		func(rxlocation vlib.Location3D, txNodeNames []string) {
-			info.NodeTypes = make([]string, len(txNodeNames))
-			info.LinkGain = vlib.NewVectorF(len(txNodeNames))
-			info.LinkGainNode = vlib.NewVectorI(len(txNodeNames))
-			info.InterferenceLinks = vlib.NewVectorF(len(txNodeNames))
-			for indx, name := range txNodeNames {
-				txlocs := singlecell.Locations(name)
-				txLocs3D := singlecell.Locations3D(name)
-
-				allpathlossPerTxType := vlib.NewVectorF((txlocs.Size()))
-
-				info.NodeTypes[indx] = name
-				N := txlocs.Size()
-
-				for k := 0; k < N; k++ {
-					// angle := float64((k) * 360 / N)
-					if name == "BS" {
-						// templateAAS.HTiltAngle = 0 //angles[k]
-						templateAAS.Omni = false
-					} else {
-						// templateAAS.HTiltAngle = 0
-						templateAAS.Omni = true
-					}
-
-					templateAAS.CreateElements(txLocs3D[k])
-					distance, _, _ := vlib.RelativeGeo(txLocs3D[k], rxlocation)
-					lossDb := model.LossInDb(distance)
-					aasgain, _, _ := templateAAS.AASGain(rxlocation) /// linear scale
-					totalGainDb := vlib.Db(aasgain) - lossDb
-					allpathlossPerTxType[k] = totalGainDb
-
-					// fmt.Printf("\n Distance %f : loss %f dB", distance, lossDb)
-					// matlab.Export(matstr, data)
-				}
-				data := statistics.Float64(allpathlossPerTxType)
-				info.LinkGain[indx], info.LinkGainNode[indx] = statistics.Max(&data) // dB
-				info.InterferenceLinks[indx] = vlib.Db(vlib.Sum(vlib.InvDbF(allpathlossPerTxType)) - vlib.InvDb(info.LinkGain[indx]))
-
-			}
-
-		}(rxlocation, txNodeNames)
-		RxLinkInfo[i] = info
-		// fmt.Printf("\n Info[%d] : %#v", i, info)
-	}
-	return RxLinkInfo
 }
 
 func DeployLayer1(system *deployment.DropSystem) {
@@ -190,11 +112,13 @@ func DeployLayer1(system *deployment.DropSystem) {
 		setting = deployment.NewDropSetting()
 	}
 
-	CellRadius := 200.0
+	CellRadius := 500.0
+	nUEPerCell := 2000
+	nCells := 19
 	AreaRadius := CellRadius
 	setting.SetCoverage(deployment.CircularCoverage(AreaRadius))
-	setting.AddNodeType(deployment.NodeType{Name: "BS", Hmin: 40.0, Hmax: 40.0, Count: 7})
-	setting.AddNodeType(deployment.NodeType{Name: "UE", Hmin: 1.1, Hmax: 10.0, Count: 30 * 7})
+	setting.AddNodeType(deployment.NodeType{Name: "BS", Hmin: 30.0, Hmax: 30.0, Count: nCells})
+	setting.AddNodeType(deployment.NodeType{Name: "UE", Hmin: 1.1, Hmax: 1.1, Count: nUEPerCell * nCells})
 
 	// setting.AddNodeType(waptype)
 	/// You can save the settings of this deployment by uncommenting this line
@@ -205,14 +129,14 @@ func DeployLayer1(system *deployment.DropSystem) {
 	setting.SetRxNodeNames("UE")
 	/// Drop BS Nodes
 	{
-		locations := deployment.HexGrid(system.NodeCount("BS"), vlib.FromCmplx(deployment.ORIGIN), 100, 30)
+		locations := deployment.HexGrid(system.NodeCount("BS"), vlib.FromCmplx(deployment.ORIGIN), CellRadius, 30)
 		system.SetAllNodeLocation("BS", vlib.Location3DtoVecC(locations))
 		// system.DropNodeType("BS")
 		// find UE locations
 		var uelocations vlib.VectorC
-		for indx, bsloc := range locations {
-			log.Printf("Deployed for cell %d ", indx)
-			ulocation := deployment.HexRandU(bsloc.Cmplx(), 100, 30, 30)
+		for _, bsloc := range locations {
+			// log.Printf("Deployed for cell %d ", indx)
+			ulocation := deployment.HexRandU(bsloc.Cmplx(), CellRadius, nUEPerCell, 30)
 			uelocations = append(uelocations, ulocation...)
 		}
 		system.SetAllNodeLocation("UE", uelocations)

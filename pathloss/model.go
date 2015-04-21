@@ -121,7 +121,7 @@ func (p *PathLossModel) LossInDbBetween3D(src, dest vlib.Location3D) float64 {
 	FreqMHz := p.FreqHz / 1.0e6
 	distance := src.DistanceFrom(dest) / 1.0e3
 	var result float64
-	if p.FreqHz >= 1.5e8 && p.FreqHz < 1.5e9 {
+	if FreqMHz >= 150 && FreqMHz < 1500 && distance > 0.05 {
 		var Ch float64
 		// Ch = 0.8 + (1.1*math.Log10(FreqMHz)-0.7)*dest.Z - 1.56*math.Log10(FreqMHz)
 		if FreqMHz >= 150.0 && FreqMHz <= 200.0 {
@@ -130,9 +130,14 @@ func (p *PathLossModel) LossInDbBetween3D(src, dest vlib.Location3D) float64 {
 			Ch = 3.2*math.Pow(math.Log10(11.75*dest.Z), 2) - 4.97
 		}
 		result = 69.55 + 26.16*math.Log10(FreqMHz) - 13.82*math.Log10(src.Z) - Ch + (44.9-6.55*math.Log10(src.Z))*math.Log10(distance)
-	} else if p.FreqHz >= 1.5e9 && p.FreqHz < 2.0e9 {
+
+	} else if FreqMHz >= 1500 && p.FreqHz < 2000 && distance > 0.05 {
 		a := (1.1*math.Log10(FreqMHz)-0.7)*dest.Z - (1.56*math.Log10(FreqMHz) - 0.8)
 		result = 46.3 + 33.9*math.Log10(FreqMHz) - 13.82*math.Log10(src.Z) - a + (44.9-6.55*math.Log10(src.Z))*math.Log10(distance) + 3
+
+	} else if FreqMHz >= 150 && FreqMHz < 2000 && distance <= 0.05 {
+		result = 20*math.Log10(distance) + 20*math.Log10(FreqMHz) + 32.45
+
 	} else {
 		log.Panic("Path loss model does not valid for given frequency")
 	}
